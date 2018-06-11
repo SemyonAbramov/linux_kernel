@@ -2,7 +2,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
-#include <openssl/md5.h>
+#include <openssl/sha.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,7 +25,7 @@
 
 void print_hash(unsigned char* hash)
 {
-    for (int i = 0; i < MD5_DIGEST_LENGTH; ++i) {
+    for (int i = 0; i < SHA_DIGEST_LENGTH; ++i) {
         printf("%02x", hash[i]);
     }
 
@@ -47,45 +47,24 @@ unsigned char hextoint(unsigned char c)
     LOG_ERROR("Hex transforming failed");
 }
 
-unsigned char* get_bad_hash()
-{
-    FILE* file = fopen(BAD_HASH_FILE, "r");
-    if (!file) {
-        LOG_ERROR("Open bad hash file failed");
-    }
-
-    unsigned char buffer[2 * MD5_DIGEST_LENGTH];
-    fscanf(file, "%s", buffer);
-    printf("buffer: %s", buffer);
-
-    int i = 0;
-    unsigned char* result = (unsigned char*)calloc(MD5_DIGEST_LENGTH, sizeof(unsigned char));
-    for (i = 0; i < MD5_DIGEST_LENGTH; ++i) {
-        result[i] = (hextoint(buffer[2 * i]) << 4) + hextoint(buffer[2 * i + 1]);
-    }
-
-    fclose(file);
-    return result;
-}
-
-unsigned char* calculate_file_md5(const char* filename)
+unsigned char* calculate_file_sha1(const char* filename)
 {
     FILE* file = fopen(filename, "r+");
     if (!file) {
-        printf("calculate_file_md5: %s can't be opened\n", filename);
+        printf("calculate_file_sha1: %s can't be opened\n", filename);
         return NULL;
     }
 
-    MD5_CTX context;
-    unsigned char data[1024];
-    MD5_Init(&context);
+	SHA_CTX ctx;
+	SHA1_Init(&ctx);
+	unsigned char data[1024];
 
-    int bytes = 0;
-    while ((bytes = fread(data, 1, 1024, file)) != 0)
-        MD5_Update(&context, data, bytes);
+	int bytes = 0;
+	while ((bytes = fread(data, 1, 1024, file)) != 0)
+		SHA1_Update(&ctx, data, bytes);
 
-    unsigned char* result = (unsigned char*)calloc(MD5_DIGEST_LENGTH, sizeof(unsigned char));
-    MD5_Final(result, &context);
+	unsigned char* result = (unsigned char*)calloc(SHA_DIGEST_LENGTH, sizeof(unsigned char));
+ 	SHA1_Final(result, &ctx);
     fclose(file);
     return result;
 }
@@ -93,45 +72,28 @@ unsigned char* calculate_file_md5(const char* filename)
 int cmp_hashes(unsigned char* lhs, unsigned char* rhs) 
 {
     int i = 0;
-    for (i = 0; i < MD5_DIGEST_LENGTH; ++i)
+    for (i = 0; i < SHA_DIGEST_LENGTH; ++i)
         if (lhs[i] != rhs[i])
             return 0;
 
     return 1;
 }
 
-
-/*
-int check_file(const char* filename) 
-{
-    unsigned char* bad_hash = get_bad_hash();
-    unsigned char* file_hash = calculate_file_md5(filename);
-    if (!file_hash)
-        return 1;
-
-	int result = !cmp_hashes(file_hash, bad_hash);
-
-    free(file_hash);
-	free(bad_hash);
-	return result;
-}
-*/
-
 int check_file(const char* filename)
 {
-	unsigned char* file_hash = calculate_file_md5(filename);
+	unsigned char* file_hash = calculate_file_sha1(filename);
 	
 	FILE* file = fopen(BAD_HASH_FILE, "r");
 	if (!file) {
 		LOG_ERROR("Open bad hash file failed");
 	}
 
-	unsigned char buffer[2 * MD5_DIGEST_LENGTH];
-	unsigned char result[MD5_DIGEST_LENGTH];
+	unsigned char buffer[2 * SHA_DIGEST_LENGTH];
+	unsigned char result[SHA_DIGEST_LENGTH];
 	int i = 0;
 	while (fscanf(file, "%s", buffer) > 0) {
 		printf("buffer: %s\n", buffer);
-		for (i = 0; i < MD5_DIGEST_LENGTH; i++) {
+		for (i = 0; i < SHA_DIGEST_LENGTH; i++) {
 			result[i] = (hextoint(buffer[2 * i]) << 4) + hextoint(buffer[2 * i + 1]);
 		}
 
@@ -140,10 +102,11 @@ int check_file(const char* filename)
 			fclose(file);
 			return 0;
 		}
-		memset(result, 0, MD5_DIGEST_LENGTH);
-		memset(buffer, 0, MD5_DIGEST_LENGTH);		
+		memset(result, 0, SHA_DIGEST_LENGTH);
+		memset(buffer, 0, SHA_DIGEST_LENGTH);		
 	}
 	free(file_hash);
+	fclose(file);
 	return 1;
 }
 
@@ -188,9 +151,9 @@ int main(int argc, char* argv[])
         	if (!event)
         		break;
 
-			printf ("wd=%d mask=%x cookie=%u len=%u\n",
-				event->wd, event->mask,
-				event->cookie, event->len);
+//			printf ("wd=%d mask=%x cookie=%u len=%u\n",
+//				event->wd, event->mask,
+//				event->cookie, event->len);
 
 			if (event->len)
         		printf("event->name: %s\n", event->name);
