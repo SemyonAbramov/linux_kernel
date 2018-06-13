@@ -13,47 +13,21 @@
 #include <time.h>
 #include <unistd.h>
 
-#define LOG_ERROR(msg)		\
+#define REPORT_ERROR_AND_EXIT(msg)		\
 	do {                    \
 		perror(msg);        \
 		exit(EXIT_FAILURE); \
 	} while (0)
 
-#define BUFSIZE 		(1000 * (sizeof(struct inotify_event) + NAME_MAX + 1))
-#define BAD_HASH_FILE 	"/home/parallels/Documents/bad_hash.txt"
-#define WATCH_PATH 		"/home/parallels/watch_files"
-
-void print_hash(unsigned char* hash)
-{
-    for (int i = 0; i < SHA_DIGEST_LENGTH; ++i) {
-        printf("%02x", hash[i]);
-    }
-
-    printf("\n");
-}
-
-unsigned char hextoint(unsigned char c)
-{
-    if (c >= '0' && c <= '9') {
-        return c - '0';
-
-    } else if (c >= 'a' && c <= 'f') {
-        return c - 'a' + 10;
-
-    } else if (c >= 'A' && c <= 'F') {
-        return c - 'A' + 10;
-    }
-
-    LOG_ERROR("Hex transforming failed");
-}
+#define BUFSIZE 			(1024 * (sizeof(struct inotify_event)))
+#define BAD_HASH_DATABASE 	"/home/parallels/Documents/bad_hash.txt"
+#define WATCH_PATH 			"/home/parallels/watch_files"
 
 unsigned char* calculate_file_sha1(const char* filename)
 {
     FILE* file = fopen(filename, "r+");
-    if (!file) {
-        printf("calculate_file_sha1: %s can't be opened\n", filename);
+    if (!file)
         return NULL;
-    }
 
 	SHA_CTX ctx;
 	SHA1_Init(&ctx);
@@ -69,9 +43,35 @@ unsigned char* calculate_file_sha1(const char* filename)
     return result;
 }
 
+unsigned char hex_to_int(unsigned char c)
+{
+    if (c >= '0' && c <= '9') {
+        return c - '0';
+
+    } else if (c >= 'a' && c <= 'f') {
+        return c - 'a' + 10;
+
+    } else if (c >= 'A' && c <= 'F') {
+        return c - 'A' + 10;
+    }
+
+    REPORT_ERROR_AND_EXIT("Hex transforming failed");
+}
+
+void print_hash(unsigned char* hash) {
+    for (int i = 0; i < SHA_DIGEST_LENGTH; ++i) {
+        printf("%02x", hash[i]);
+    }
+
+    printf("\n");
+}
+
 int cmp_hashes(unsigned char* lhs, unsigned char* rhs) 
 {
-    int i = 0;
+	if ((!lhs) || (!rhs))
+		return 0;
+
+	int i = 0;
     for (i = 0; i < SHA_DIGEST_LENGTH; ++i)
         if (lhs[i] != rhs[i])
             return 0;
@@ -79,22 +79,24 @@ int cmp_hashes(unsigned char* lhs, unsigned char* rhs)
     return 1;
 }
 
-int check_file(const char* filename)
+int check_file_on_virus(const char* filename)
 {
 	unsigned char* file_hash = calculate_file_sha1(filename);
 	
-	FILE* file = fopen(BAD_HASH_FILE, "r");
+	if (!file_hash)
+		return 1;
+
+	FILE* file = fopen(BAD_HASH_DATABASE, "r");
 	if (!file) {
-		LOG_ERROR("Open bad hash file failed");
+		REPORT_ERROR_AND_EXIT("Open bad hash file failed");
 	}
 
 	unsigned char buffer[2 * SHA_DIGEST_LENGTH];
 	unsigned char result[SHA_DIGEST_LENGTH];
 	int i = 0;
 	while (fscanf(file, "%s", buffer) > 0) {
-		printf("buffer: %s\n", buffer);
 		for (i = 0; i < SHA_DIGEST_LENGTH; i++) {
-			result[i] = (hextoint(buffer[2 * i]) << 4) + hextoint(buffer[2 * i + 1]);
+			result[i] = (hex_to_int(buffer[2 * i]) << 4) + hex_to_int(buffer[2 * i + 1]);
 		}
 
 		if (cmp_hashes(file_hash, result)) {
@@ -105,7 +107,9 @@ int check_file(const char* filename)
 		memset(result, 0, SHA_DIGEST_LENGTH);
 		memset(buffer, 0, SHA_DIGEST_LENGTH);		
 	}
-	free(file_hash);
+	
+	if (file_hash)
+		free(file_hash);
 	fclose(file);
 	return 1;
 }
@@ -115,21 +119,21 @@ int check_event(struct inotify_event* event)
 {
     if (!(event->mask & (IN_CREATE | IN_MODIFY | IN_CLOSE_WRITE | IN_MOVED_TO)))
 		return 1;
-	
-	return check_file(event->name);
+
+	return check_file_on_virus(event->name);
 }
 
 int main(int argc, char* argv[])
 {
     int inotify_fd = inotify_init1(IN_NONBLOCK);
     if (inotify_fd < 0) {
-        LOG_ERROR("inofity_init1: Failed");
+        REPORT_ERROR_AND_EXIT("inofity_init1: Failed");
     }
 
     int watched_fd = inotify_add_watch(inotify_fd, WATCH_PATH, IN_ALL_EVENTS ^ IN_OPEN ^ IN_ACCESS ^ IN_CLOSE);
     if (watched_fd < 0) {
         close(inotify_fd);
-        LOG_ERROR("inotify_add_watch: Failed");
+        REPORT_ERROR_AND_EXIT("inotify_add_watch: Failed");
 	}
 
 	char buffer[BUFSIZE];
@@ -139,7 +143,7 @@ int main(int argc, char* argv[])
 	while (1) {
 		ssize_t len = read(inotify_fd, buffer, sizeof(buffer));
 		if (len == -1 && errno != EAGAIN) {
-			LOG_ERROR("read failed");
+			REPORT_ERROR_AND_EXIT("read failed");
 		}
 
         if (len < 0)
@@ -155,8 +159,8 @@ int main(int argc, char* argv[])
 //				event->wd, event->mask,
 //				event->cookie, event->len);
 
-			if (event->len)
-        		printf("event->name: %s\n", event->name);
+//			if (event->len)
+//        		printf("event->name: %s\n", event->name);
 
 			if (event->wd == watched_fd && !check_event(event)) {
                 unlink(event->name);
